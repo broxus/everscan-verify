@@ -9,7 +9,6 @@ env:
   RELEASE_BIN: everscan-verify
   RELEASE_DIR: artifacts
   GITHUB_REF: "${{ github.ref }}"
-  WINDOWS_TARGET: x86_64-pc-windows-msvc
   MACOS_TARGET: x86_64-apple-darwin
   LINUX_TARGET: x86_64-unknown-linux-musl
 
@@ -22,7 +21,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        build: [linux, macos, windows, wranglerjs]
+        build: [linux, macos, everscan-verifyjs]
         include:
           - build: linux
             os: ubuntu-latest
@@ -30,10 +29,7 @@ jobs:
           - build: macos
             os: macos-latest
             rust: stable
-          - build: windows
-            os: windows-latest
-            rust: stable
-          - build: wranglerjs
+          - build: everscan-verifyjs
             os: ubuntu-latest
 
     steps:
@@ -71,13 +67,7 @@ jobs:
       - name: Build (MacOS)
         if: matrix.build == 'macos'
         run: cargo build --release
-
-      - name: Build (Windows)
-        if: matrix.build == 'windows'
-        run: cargo build --release
-        env:
-          RUSTFLAGS: -Ctarget-feature=+crt-static
-
+        
       - name: Create artifact directory
         run: |
           mkdir ${{ env.RELEASE_DIR }}
@@ -90,14 +80,6 @@ jobs:
           mv ${{ env.RELEASE_ADDS }} ./dist
           7z a -ttar -so -an ./dist | 7z a -si ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
 
-      - name: Create tarball (Windows)
-        if: matrix.build == 'windows'
-        shell: bash
-        run: |
-          mv ./target/release/${{ env.RELEASE_BIN }}.exe ./dist/${{ env.RELEASE_BIN }}.exe
-          mv ${{ env.RELEASE_ADDS }} ./dist
-          7z a -ttar -so -an ./dist | 7z a -si ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.WINDOWS_TARGET }}.tar.gz
-
       - name: Create tarball (MacOS)
         if: matrix.build == 'macos'
         run: |
@@ -105,9 +87,9 @@ jobs:
           mv ${{ env.RELEASE_ADDS }} ./dist
           7z a -ttar -so -an ./dist | 7z a -si ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
 
-      - name: Create tarball (wranglerjs)
-        if: matrix.build == 'wranglerjs'
-        run: 7z a -ttar -so -an ./wranglerjs | 7z a -si ./${{ env.RELEASE_DIR }}/wranglerjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
+      - name: Create tarball (everscan-verifyjs)
+        if: matrix.build == 'everscan-verifyjs'
+        run: 7z a -ttar -so -an ./everscan-verifyjs | 7z a -si ./${{ env.RELEASE_DIR }}/everscan-verifyjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
 
       - name: Upload Zip
         uses: actions/upload-artifact@v1
@@ -136,35 +118,30 @@ jobs:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           release_name: ${{ steps.get_version.outputs.VERSION }}
 
-      - name: Download wranglerjs tarball
+      - name: Download everscan-verifyjs tarball
         uses: actions/download-artifact@v1
         with:
-          name: wranglerjs
+          name: everscan-verifyjs
 
       - name: Download Linux tarball
         uses: actions/download-artifact@v1
         with:
           name: linux
 
-      - name: Download Windows tarball
-        uses: actions/download-artifact@v1
-        with:
-          name: windows
-
       - name: Download MacOS tarball
         uses: actions/download-artifact@v1
         with:
           name: macos
 
-      - name: Release wranglerjs tarball
+      - name: Release everscan-verifyjs tarball
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./wranglerjs/wranglerjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          asset_path: ./everscan-verifyjs/everscan-verifyjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
           asset_content_type: application/gzip
-          asset_name: wranglerjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          asset_name: everscan-verifyjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
 
       - name: Release Linux tarball
         uses: actions/upload-release-asset@v1
@@ -172,19 +149,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./linux/wrangler-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
+          asset_path: ./linux/everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
           asset_content_type: application/gzip
-          asset_name: wrangler-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
-
-      - name: Release Windows tarball
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./windows/wrangler-${{ steps.get_version.outputs.VERSION }}-${{ env.WINDOWS_TARGET }}.tar.gz
-          asset_content_type: application/gzip
-          asset_name: wrangler-${{ steps.get_version.outputs.VERSION }}-${{ env.WINDOWS_TARGET }}.tar.gz
+          asset_name: everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
 
       - name: Release MacOS tarball
         uses: actions/upload-release-asset@v1
@@ -192,6 +159,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./macos/wrangler-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
+          asset_path: ./macos/everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
           asset_content_type: application/gzip
-          asset_name: wrangler-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
+          asset_name: everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
