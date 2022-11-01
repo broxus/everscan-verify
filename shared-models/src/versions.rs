@@ -35,13 +35,3 @@ impl Versions {
         &self.solc_versions
     }
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        Versions::new("../versions_map.json").expect("Failed");
-    }
-}

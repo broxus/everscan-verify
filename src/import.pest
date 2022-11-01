@@ -1,0 +1,29 @@
+escaped_char = {"\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")}
+
+char_dquote = {
+    !("\"" ) ~ (escaped_char | ANY)
+}
+char_quote = {
+    !("'" ) ~ (escaped_char | ANY)
+}
+
+string_dquote = @{char_dquote*}
+string_quote = @{char_quote*}
+
+
+WHITESPACE = _{ " " | NEWLINE }
+COMMENT = _{
+    ("//" ~ (!NEWLINE ~ ANY)*) |
+    ("/*" ~ (!"*/" ~ ANY)* ~ "*/")
+}
+
+ident_char = @{ ASCII_ALPHANUMERIC | "_" }
+ident = @{ ident_char+ }
+
+path = {("\"" ~ string_dquote ~ "\"") | ("'" ~ string_quote ~ "'")}
+rename = _{
+   "{" ~ ident ~ "as" ~ ident ~ ("," ~ ident ~ "as" ~ ident)*  ~ "}" ~ "from"
+}
+import_expr = { "import" ~ rename? ~ path ~ ";"}
+
+imports = {SOI ~ (import_expr | ANY)+ ~ EOI}
