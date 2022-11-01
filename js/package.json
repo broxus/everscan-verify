@@ -1,0 +1,16 @@
+{
+  "name": "everscan-verify",
+  "version": "1.5.0",
+  "description": "Everscan verify",
+  "scripts": {
+    "postinstall": "node ./install.js"
+  },
+  "bin": {
+    "everscan-verify": "run.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "console.table": "^0.10.0",
+    "binary-install": "^1.0.1"
+  }
+}
