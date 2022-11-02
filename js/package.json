@@ -1,6 +1,6 @@
 {
   "name": "everscan-verify",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Everscan verify",
   "scripts": {
     "postinstall": "node ./install.js"
@@ -12,5 +12,9 @@
   "dependencies": {
     "console.table": "^0.10.0",
     "binary-install": "^1.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/broxus/everscan-verify"
   }
 }

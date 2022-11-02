@@ -65,8 +65,8 @@ const getPlatform = () => {
 const getBinary = () => {
     const platform = getPlatform();
     // the url for this binary is constructed from values in `package.json`
-    // https://binaries.everscan.workers.dev/everscan-verify-v1.0.4-x86_64-unknown-linux-gnu.tar.gz
-    const url = `https://binaries.everscan.workers.dev/${name}-${platform}.tar.gz`;
+    // https://github.com/broxus/everscan-verify/releases/download/v1.0.2/everscan-verify-v1.0.2-x86_64-apple-darwin.tar.gz
+    const url = `${repository.url}/releases/download/v${version}/${name}-v${version}-${platform}.tar.gz`;
     return new Binary(name, url);
 };
 
