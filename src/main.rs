@@ -1,3 +1,4 @@
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
@@ -5,12 +6,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser};
-use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Table};
-use console::style;
+use colour::{cyan, cyan_ln, green, green_ln, grey_ln, magenta, red, red_ln, yellow, yellow_ln};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use crossterm::style::Stylize;
 use dialoguer::Select;
 use pathdiff::diff_paths;
@@ -20,8 +20,8 @@ use spinners::Spinner;
 use ureq::{Agent, Error};
 use walkdir::DirEntry;
 
-use everscan_verify::{ContractPath, get_paths, resolve_deps};
 use everscan_verify::utils;
+use everscan_verify::{get_paths, resolve_deps, ContractPath};
 use shared_models::{
     CompileRequest, CompileResponse, CompilerInfo, LinkerInfo, Source, SourceType,
 };
@@ -33,10 +33,6 @@ struct Cli {
     subcommands: Subcommands,
     #[clap(long = "api-url", default_value = "https://verify.everscan.io")]
     api_url: String,
-    #[clap(long = "api-key")]
-    api_key: Option<String>,
-    #[clap(long)]
-    secret: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -76,6 +72,11 @@ struct Upload {
     /// Include path. Works like in solc
     #[clap(short = 'I', long = "include-path")]
     include_paths: Option<Vec<PathBuf>>,
+
+    #[clap(long = "api-key")]
+    api_key: Option<String>,
+    #[clap(long)]
+    secret: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -115,9 +116,75 @@ struct Verify {
     /// If set will ignore any resolve errors
     #[clap(long = "ignore-errors")]
     ignore_errors: bool,
+
+    /// We try to verify all contracts in the project
+    #[clap(long = "compile-all")]
+    compile_all: bool,
+
+    #[clap(long = "api-key")]
+    api_key: Option<String>,
+    #[clap(long)]
+    secret: Option<String>,
 }
 
-/// # Algorythm:
+impl Verify {
+    pub fn verify(&mut self, url: &str) -> Result<()> {
+        let (supported_linkers, supported_compilers) = get_supported_versions(url)?;
+
+        let is_ok_compiler = supported_compilers
+            .iter()
+            .any(|(_, commit)| commit == &self.compiler_version);
+
+        if !is_ok_compiler {
+            red!("Compiler version");
+            cyan!(" {} ", self.compiler_version);
+            red_ln!("is not supported",);
+            let looking_similar = supported_compilers
+                .iter()
+                .filter(|(_, commit)| commit.starts_with(&self.compiler_version))
+                .collect::<Vec<_>>();
+            if !looking_similar.is_empty() {
+                yellow_ln!("Looking for similar versions:");
+
+                self.compiler_version = if looking_similar.len() == 1 {
+                    yellow!("Compiler ");
+                    cyan!(" {} ", looking_similar[0].1);
+                    yellow_ln!("is looking similar. Using it.",);
+                    looking_similar[0].1.clone()
+                } else {
+                    let choice = Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                        .with_prompt("Select version")
+                        .items(
+                            &looking_similar
+                                .iter()
+                                .map(|(v, commit)| (format!("{commit} - {v}")))
+                                .collect::<Vec<_>>(),
+                        )
+                        .default(0)
+                        .interact()?;
+                    looking_similar[choice].1.clone()
+                };
+            }
+        }
+
+        let linker_version =
+            Version::parse(&self.linker_version).context("Invalid linker version")?;
+
+        if !supported_linkers.contains(&linker_version) {
+            red!("Linker version");
+            cyan!(" {} ", self.linker_version);
+            red_ln!("is not supported");
+
+            yellow!("Tip: ");
+            cyan_ln!("check `everscan-verify info` for supported versions");
+            std::process::exit(1);
+        }
+
+        Ok(())
+    }
+}
+
+/// # Algorithm:
 /// 1. traverse all sol files
 /// 2. for each sol file:
 ///     - get all paths
@@ -135,18 +202,13 @@ fn main() -> Result<()> {
     let args = Cli::parse();
 
     match args.subcommands {
-        Subcommands::Verify(v) => handle_verify(v, args.api_url, args.api_key, args.secret),
+        Subcommands::Verify(v) => handle_verify(v, args.api_url),
         Subcommands::Info(_) => handle_info(args.api_url),
-        Subcommands::Upload(u) => handle_upload(u, args.api_url, args.api_key, args.secret),
+        Subcommands::Upload(u) => handle_upload(u, args.api_url),
     }
 }
 
-fn handle_upload(
-    u: Upload,
-    api_url: String,
-    api_key: Option<String>,
-    secret: Option<String>,
-) -> Result<()> {
+fn handle_upload(u: Upload, api_url: String) -> Result<()> {
     #[derive(Serialize)]
     pub struct DbContractInfo {
         pub abi: serde_json::Value,
@@ -161,7 +223,7 @@ fn handle_upload(
         pub linker_version: String,
     }
 
-    let (api_key, secret) = utils::get_credentials(api_key, secret);
+    let (api_key, secret) = utils::get_credentials(u.api_key, u.secret);
 
     let json_files = walkdir::WalkDir::new(&u.build)
         .into_iter()
@@ -192,10 +254,10 @@ fn handle_upload(
     for idx in idxs {
         let abi_path = json_files[idx].clone();
         let tvc_path = abi_path.replace("abi.json", "tvc");
-        let contract_base = if let Some(p) =utils::file_prefix(&abi_path) {
+        let contract_base = if let Some(p) = utils::file_prefix(&abi_path) {
             p.to_string_lossy().to_string()
         } else {
-            println!("Failed to get contract base name for {abi_path}");
+            yellow_ln!("Failed to get contract base name for {abi_path}");
             continue;
         };
 
@@ -205,7 +267,9 @@ fn handle_upload(
 
         let matched_sources = sources
             .iter()
-            .filter_map(|s| (utils::file_prefix(&s.path)?.to_string_lossy() == contract_base).then_some(s))
+            .filter_map(|s| {
+                (utils::file_prefix(&s.path)?.to_string_lossy() == contract_base).then_some(s)
+            })
             .collect::<Vec<_>>();
 
         let matched_sources_list = matched_sources
@@ -252,14 +316,12 @@ fn handle_upload(
             linker_version: u.linker_version.clone(),
         };
 
-        println!(
-            "{}",
-            "Check that source and artifacts are the same before submission".yellow()
-        );
-        println!("Contract path: {}", source.path.to_string_lossy().magenta());
-        println!("Abi path: {}", abi_path.clone().magenta());
-        println!("Code path: {}", format!("{}.code", contract_base).magenta());
-        println!("Tvc path: {}", format!("{}.tvc", contract_base).magenta());
+        yellow_ln!("Check that source and artifacts are the same before submission");
+
+        green_ln!("Contract path: {}", source.path.to_string_lossy());
+        green_ln!("Abi path: {}", abi_path.clone());
+        green_ln!("Code path: {}", format!("{}.code", contract_base));
+        green_ln!("Tvc path: {}", format!("{}.tvc", contract_base).magenta());
 
         let res = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt("Are you sure you want to submit this contract?")
@@ -267,7 +329,7 @@ fn handle_upload(
             .with_context(|| "Failed to confirm contract")?;
 
         if !res {
-            println!("{}", "Skipping contract".yellow());
+            yellow_ln!("Skipping contract");
             continue;
         }
         let mut spinner = Spinner::with_timer(
@@ -298,25 +360,17 @@ fn handle_upload(
                 match e {
                     Error::Status(_, response) => {
                         if response.status() == 409 {
-                            println!(
-                                "{}",
-                                style(format!("Contract {} already exists", contract_base.cyan()))
-                                    .yellow()
-                            )
+                            yellow_ln!("Contract {} already exists");
                         } else {
-                            println!(
-                                "{}",
-                                style(format!(
-                                    "Failed to upload {}: {}",
-                                    contract_base,
-                                    response.into_string()?
-                                ))
-                                .red()
+                            red_ln!(
+                                "Failed to upload {}: {}",
+                                contract_base,
+                                response.into_string()?
                             );
                         }
                     }
                     Error::Transport(e) => {
-                        eprintln!("Failed to upload {}: {}", contract_base, e);
+                        red_ln!("Failed to upload {}: {}", contract_base, e);
                         std::process::exit(1);
                     }
                 }
@@ -325,14 +379,10 @@ fn handle_upload(
         };
 
         if response.status() == 201 {
-            println!(
-                "{}",
-                style(format!(
-                    "Uploaded {}. Code hash: {}",
-                    contract_base,
-                    response.into_string()?
-                ))
-                .green()
+            green_ln!(
+                "Uploaded {}. Code hash: {}",
+                contract_base,
+                response.into_string()?
             );
         }
     }
@@ -341,6 +391,27 @@ fn handle_upload(
 }
 
 fn handle_info(api_url: String) -> Result<()> {
+    let (supported_linkers, supported_compilers) = get_supported_versions(&api_url)?;
+
+    cyan_ln!("\nSupported linkers:");
+    for linker in supported_linkers {
+        green_ln!("- {}", linker);
+    }
+
+    cyan_ln!("\nSupported compilers");
+
+    for (version, commit) in supported_compilers {
+        green!("- {} ", version);
+        cyan!("Commit: ");
+        green_ln!("{}", commit);
+    }
+
+    Ok(())
+}
+
+type SupportedVersions = (Vec<Version>, Vec<(Version, String)>);
+
+fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
     let client = default_client()?;
 
     let supported_linkers: Vec<String> = client
@@ -363,12 +434,6 @@ fn handle_info(api_url: String) -> Result<()> {
         .into_json()
         .context("Failed to router supported compilers")?;
 
-    println!("{}", style("Supported linkers").cyan());
-    for linker in supported_linkers {
-        println!("- {}", style(linker).green());
-    }
-
-    println!("{}", style("Supported compilers").cyan());
     let mut supported_compilers = supported_compilers
         .into_iter()
         .map(|(commit, version)| {
@@ -384,32 +449,20 @@ fn handle_info(api_url: String) -> Result<()> {
         })
         .collect::<Vec<_>>();
     supported_compilers.sort_by(|a, b| a.0.cmp(&b.0));
-
-    for (version, commit) in supported_compilers {
-        println!(
-            "- {} Commit: {}",
-            style(version).magenta(),
-            style(commit).green()
-        );
-    }
-
-    Ok(())
+    Ok((supported_linkers, supported_compilers))
 }
 
-fn handle_verify(
-    args: Verify,
-    api_url: String,
-    api_key: Option<String>,
-    secret: Option<String>,
-) -> Result<()> {
-    let (api_key, secret) = utils::get_credentials(api_key, secret);
+fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
+    args.verify(&api_url)?;
+
+    let (api_key, secret) = utils::get_credentials(args.api_key, args.secret);
 
     let mut contracts = resolve_sources(&args.input, &args.include_paths, args.ignore_errors)?;
 
     args.output
         .parent()
         .as_ref()
-        .and_then(|x| std::fs::create_dir_all(&x).ok());
+        .and_then(|x| std::fs::create_dir_all(x).ok());
     let outfile_path = args.output.join("sources.json");
     let outfile = std::fs::File::create(&outfile_path).with_context(|| {
         format!(
@@ -424,14 +477,18 @@ fn handle_verify(
         .cloned()
         .collect::<Vec<_>>();
 
-    let idxs = dialoguer::MultiSelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
-        .with_prompt("Select contracts to verify with space")
-        .items(&filtered_contracts)
-        .interact()
-        .with_context(|| "Failed to select contracts")?;
+    let idxs = if args.compile_all {
+        (0..filtered_contracts.len()).collect::<Vec<_>>()
+    } else {
+        dialoguer::MultiSelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Select contracts to verify with space")
+            .items(&filtered_contracts)
+            .interact()
+            .with_context(|| "Failed to select contracts")?
+    };
 
     if idxs.is_empty() {
-        println!("{}", style("No contracts selected").yellow());
+        yellow_ln!("No contracts selected");
         return Ok(());
     }
 
@@ -462,12 +519,10 @@ fn handle_verify(
     };
 
     serde_json::to_writer_pretty(outfile, &compile_request)?;
-    println!(
-        "✅ {} {}. {}",
-        style("Saved to").green(),
-        outfile_path.canonicalize()?.display(),
-        style("Check it before submission").yellow()
-    );
+    green_ln!("✅ All done");
+    yellow_ln!("⚠️  Don't forget to check the output file before submission");
+    cyan_ln!("File: {}", outfile_path.display());
+
     let submit = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
         .with_prompt("Do you want to submit this request to the verifier?")
         .interact()
@@ -476,7 +531,7 @@ fn handle_verify(
     if submit {
         let client = default_client()?;
 
-        let mut spinner = spinners::Spinner::with_timer(
+        let mut spinner = Spinner::with_timer(
             spinners::Spinners::TimeTravel,
             "Waiting for verification result...".to_string(),
         );
@@ -505,11 +560,10 @@ fn handle_verify(
                 serde_json::from_str(&resp.into_string().context("Failed to router response")?)?;
             render_markdown(response, checked)?;
         } else {
-            println!(
-                "❌ {} {} Response: {}",
-                style("Failed to send request").red(),
-                style(resp.status()).red(),
-                style(resp.into_string().context("Failed to router response")?).red()
+            red!("❌ Failed to send request: {} ", resp.status());
+            red_ln!(
+                "Response: {}",
+                resp.into_string().context("Failed get  response")?
             );
         }
     }
@@ -532,7 +586,7 @@ fn resolve_sources(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    println!("✨ {}", style("Starting to resolve paths").yellow());
+    green_ln!("✨ Starting to resolve paths");
     let (contracts, lib_root) = extract_imports(&project_root, &includes)?;
     let mut failed = false;
     let mut contracts: Vec<_> = contracts
@@ -541,12 +595,9 @@ fn resolve_sources(
         .filter_map(
             |mut contract| match contract.remap(&lib_root, &project_root, &includes) {
                 Err(e) => {
-                    eprintln!(
-                        "{} {}: {:?}",
-                        style("Failed remaping").red(),
-                        style(contract.path.display()).cyan(),
-                        style(e).red()
-                    );
+                    red!("❌ Failed to remap imports. ");
+                    cyan!("Contract: {}", contract.path.display());
+                    red_ln!(" Error: {:?}", e);
                     failed = true;
                     None
                 }
@@ -561,10 +612,8 @@ fn resolve_sources(
     }
 
     if failed && !ignore_errors {
-        println!(
-            "{}",
-            style("Run with --ignore-errors to ignore errors").yellow()
-        );
+        red_ln!("❌ Failed to resolve paths.");
+        grey_ln!("Tip: Run with --ignore-errors to ignore errors");
         return Err(anyhow::anyhow!("Failed to remap paths"));
     }
 
@@ -596,7 +645,7 @@ fn render_markdown(response: CompileResponse, checked_to_compile: HashSet<PathBu
             .set_content_arrangement(ContentArrangement::Dynamic);
         table.set_header(vec!["Contract path", "Code hash"]);
 
-        println!("{}", style("Successfully verified").green());
+        green_ln!("✅ Verified contracts:");
         for contract in compiled {
             table.add_row(vec![
                 contract.contract_name,
@@ -611,7 +660,7 @@ fn render_markdown(response: CompileResponse, checked_to_compile: HashSet<PathBu
         .iter()
         .any(|x| checked_to_compile.contains(x.0))
     {
-        println!("{}", style("Failed to compile:").yellow());
+        yellow_ln!("⚠️  These contracts failed to compile:");
 
         for (path, result) in response
             .failed_to_verify
@@ -620,15 +669,14 @@ fn render_markdown(response: CompileResponse, checked_to_compile: HashSet<PathBu
         {
             println!("Contract path: {path}");
             println!("Compiler stdout:");
-            println!("{}\n", style(result.compiler_output.stdout).yellow());
-            println!("Compiler stderr:");
-            println!("{}\n", style(result.compiler_output.stderr).red());
+            yellow_ln!("{}\n", result.compiler_output.stdout);
+            yellow_ln!("{}\n", result.compiler_output.stderr);
 
             if let Some(out) = result.linker_output {
                 println!("Linker stdout:");
-                println!("{}\n", style(out.stdout).yellow());
+                yellow_ln!("{}\n", out.stdout);
                 println!("Linker stderr:");
-                println!("{}\n", style(out.stderr).red());
+                yellow_ln!("{}\n", out.stderr);
             }
         }
     }
@@ -641,7 +689,7 @@ fn render_markdown(response: CompileResponse, checked_to_compile: HashSet<PathBu
             .set_content_arrangement(ContentArrangement::Dynamic);
         table.set_header(vec!["Contract path", "Code hash"]);
 
-        println!("{}", style("Already verified:").yellow());
+        yellow_ln!("These contracts were already verified:");
         for (path, code_hash) in response.already_verified {
             table.add_row(vec![path, code_hash]);
         }
@@ -673,15 +721,7 @@ fn extract_imports(
             project_root,
             includes,
         ) {
-            eprintln!(
-                "{}",
-                style(format!(
-                    "Failed to process {}: {:?}",
-                    file.path().display(),
-                    e
-                ))
-                .red()
-            );
+            red_ln!("❌ Failed to process {}: {:?}", file.path().display(), e);
         }
     }
 
@@ -710,15 +750,18 @@ fn process_contract(
     } else {
         visited_contracts.insert(contract_path.clone());
     }
-    println!(
-        "🤹 Processing {}",
-        style(contract_path.display().to_string()).cyan()
-    );
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    green!("🤹 Processing ");
+    cyan_ln!("{}", contract_path.display());
+
+    std::thread::sleep(Duration::from_millis(1));
     let content = match std::fs::read_to_string(&contract_path) {
         Ok(content) => content,
         Err(err) => {
-            eprintln!("Failed reading {}: {:?}", contract_path.display(), err);
+            red_ln!(
+                "❌ Failed to process {}: {:?}",
+                contract_path.display(),
+                err
+            );
             return Ok(());
         }
     };
@@ -925,12 +968,11 @@ fn get_canonical_paths(
                 }
             }
             if initial_resolve {
-                println!(
-                    "{}: {}. {}",
-                    style("Failed to resolve").red(),
-                    style(contract_import.path.display()).cyan(),
-                    style("Tip: Maybe you forgot to set `--include-path`?").yellow()
-                );
+                red!("Failed to resolve ");
+                cyan_ln!("{}", contract_import.path.display());
+                yellow!("Tip: ");
+                magenta!("Maybe you forgot to set ");
+                yellow_ln!("`--include-path`?");
             }
             None
         })
@@ -1075,7 +1117,7 @@ mod test {
     };
 
     use crate::{
-        ClassifiedImports, get_relative_path, ImportKind, render_markdown, update_abs_path,
+        get_relative_path, render_markdown, update_abs_path, ClassifiedImports, ImportKind,
     };
 
     #[test]
@@ -1163,6 +1205,6 @@ mod test {
 
     #[test]
     fn display() {
-        render_markdown(test_data(),Default::default()).unwrap();
+        render_markdown(test_data(), Default::default()).unwrap();
     }
 }
