@@ -1,6 +1,6 @@
 {
   "name": "everscan-verify",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Everscan verify",
   "scripts": {
     "postinstall": "node ./install.js"
