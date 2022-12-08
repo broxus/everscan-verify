@@ -37,7 +37,7 @@ const supportedPlatforms = [
     {
         TYPE: "Darwin",
         ARCHITECTURE: "arm64",
-        RUST_TARGET: "aarch64-apple-darwin"
+        RUST_TARGET: "x86_64-apple-darwin"
     }
 ];
 
