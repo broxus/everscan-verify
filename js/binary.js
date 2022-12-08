@@ -66,8 +66,7 @@ const getBinary = () => {
     const platform = getPlatform();
     // the url for this binary is constructed from values in `package.json`
     // https://github.com/broxus/everscan-verify/releases/download/v1.0.2/everscan-verify-v1.0.2-x86_64-apple-darwin.tar.gz
-    const url = `${repository.url}/releases/download/v${version}/${name}-v${version}-${platform}.tar.gz`;
-    console.log(`Downloading binary from ${url}`);
+    const url = `${repository.url}/releases/download/v${version}/${name}-v${version}-${platform}.tar.gz`.replace('git+','');
     return new Binary(name, url);
 };
 
@@ -78,6 +77,7 @@ const run = () => {
 
 const install = () => {
     const binary = getBinary();
+    console.log(`Downloading binary from ${binary.url}`);
     binary.install();
 };
 
