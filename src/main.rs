@@ -624,8 +624,7 @@ fn resolve_sources(
 fn default_client() -> Result<Agent> {
     let client = ureq::builder()
         .tls_connector(Arc::new(native_tls::TlsConnector::new()?))
-        .timeout_read(Duration::from_secs(30))
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(300))
         .build();
     Ok(client)
 }
