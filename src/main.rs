@@ -3,7 +3,6 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
@@ -14,10 +13,10 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArra
 use crossterm::style::Stylize;
 use dialoguer::Select;
 use pathdiff::diff_paths;
+use reqwest::blocking::Client;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use spinners::Spinner;
-use ureq::{Agent, Error};
 use walkdir::DirEntry;
 
 use everscan_verify::utils;
@@ -349,28 +348,31 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
 
         let response = client
             .put(&format!("{}/authorized/upload", api_url))
-            .set("X-API-KEY", &api_key)
-            .set("signature", &signature)
-            .set("nonce", &nonce.to_string())
-            .send_json(req);
+            .header("X-API-KEY", &api_key)
+            .header("signature", &signature)
+            .header("nonce", &nonce.to_string())
+            .json(&req)
+            .send();
         spinner.stop_with_newline();
         let response = match response {
             Ok(r) => r,
             Err(e) => {
-                match e {
-                    Error::Status(_, response) => {
-                        if response.status() == 409 {
+                if e.is_connect() {
+                    red_ln!("Failed to connect to server: {:?}", e);
+                    std::process::exit(1);
+                }
+
+                match e.status() {
+                    Some(status) => {
+                        if status.as_u16() == 409 {
                             yellow_ln!("Contract {} already exists");
                         } else {
-                            red_ln!(
-                                "Failed to upload {}: {}",
-                                contract_base,
-                                response.into_string()?
-                            );
+                            red_ln!("Failed to upload {}: {}", contract_base, e.to_string());
+                            std::process::exit(1);
                         }
                     }
-                    Error::Transport(e) => {
-                        red_ln!("Failed to upload {}: {}", contract_base, e);
+                    None => {
+                        red_ln!("Failed to upload {}: {}", contract_base, e.to_string());
                         std::process::exit(1);
                     }
                 }
@@ -378,11 +380,11 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
             }
         };
 
-        if response.status() == 201 {
+        if response.status().as_u16() == 201 {
             green_ln!(
                 "Uploaded {}. Code hash: {}",
                 contract_base,
-                response.into_string()?
+                response.text()?
             );
         }
     }
@@ -416,9 +418,9 @@ fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
 
     let supported_linkers: Vec<String> = client
         .get(&format!("{}/supported/linker", api_url))
-        .call()
+        .send()
         .context("Failed to get supported linkers")?
-        .into_json()
+        .json()
         .context("Failed to router supported linkers")?;
 
     let mut supported_linkers = supported_linkers
@@ -429,9 +431,9 @@ fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
 
     let supported_compilers: HashMap<String, String> = client
         .get(&format!("{}/supported/solc", api_url))
-        .call()
+        .send()
         .context("Failed to get supported compilers")?
-        .into_json()
+        .json()
         .context("Failed to router supported compilers")?;
 
     let mut supported_compilers = supported_compilers
@@ -546,25 +548,28 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
         let concat = format!("{}{}{}", &api_key, &hash, nonce);
         let signature = hex::encode(hmac_sha256::HMAC::mac(concat.as_bytes(), secret.as_bytes()));
 
+        let url = api_url + "/authorized/compile";
+
         let resp = client
-            .post(&(api_url + "/authorized/compile"))
-            .set("X-API-KEY", &api_key)
-            .set("signature", &signature)
-            .set("nonce", &nonce.to_string())
-            .send_json(&compile_request)
+            .post(&(url))
+            .header("X-API-KEY", &api_key)
+            .header("signature", &signature)
+            .header("nonce", &nonce.to_string())
+            .json(&compile_request)
+            .send()
             .context("Failed to send request")?;
 
         spinner.stop_with_newline();
-        if resp.status() == 200 {
-            let response =
-                serde_json::from_str(&resp.into_string().context("Failed to router response")?)?;
-            render_markdown(response, checked)?;
+
+        if resp.status().is_success() {
+            let text = resp.text().context("Failed to get server response")?;
+
+            let json = serde_json::from_str(&text).context("Invalid server answer")?;
+            render_markdown(json, checked)?;
         } else {
-            red!("❌ Failed to send request: {} ", resp.status());
-            red_ln!(
-                "Response: {}",
-                resp.into_string().context("Failed get  response")?
-            );
+            red_ln!("❌ Failed to send request: {:?} ", resp.status());
+            let text = resp.text().context("Failed to get server response")?;
+            red_ln!("Response: {}", text);
         }
     }
 
@@ -621,11 +626,13 @@ fn resolve_sources(
     Ok(contracts)
 }
 
-fn default_client() -> Result<Agent> {
-    let client = ureq::builder()
-        .tls_connector(Arc::new(native_tls::TlsConnector::new()?))
+fn default_client() -> Result<Client> {
+    let client = Client::builder()
         .timeout(Duration::from_secs(300))
-        .build();
+        .gzip(true)
+        .build()
+        .unwrap();
+
     Ok(client)
 }
 

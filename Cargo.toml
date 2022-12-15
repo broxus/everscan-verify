@@ -13,14 +13,13 @@ crossterm = "0.25.0"
 dialoguer = { version = "0.10.1" }
 hex = "0.4.3"
 hmac-sha256 = "1.1.4"
-native-tls = { version = "0.2.10", features = ["vendored"] }
 pathdiff = "0.2.1"
 pest = "2.1"
 pest_derive = "2.1"
 semver = "1.0.10"
 serde_json = "1.0.79"
 spinners = { version = "4.1.0" }
-ureq = { version = "2.4.0", features = ["json", "native-tls"], default-features = false }
+reqwest = { version = "0.11.13", default-features = false, features = ["blocking", "json", "native-tls", "gzip"] }
 walkdir = "2.3.2"
 colour = "0.6.0"
 
