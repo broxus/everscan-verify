@@ -1056,7 +1056,7 @@ fn is_sol(entry: &DirEntry) -> bool {
         .extension()
         .unwrap_or_default()
         .to_string_lossy();
-    extension == "sol"
+    extension == "sol" || extension == "tsol"
 }
 
 pub fn common_path_all<Pat>(paths: impl IntoIterator<Item = Pat>) -> Option<PathBuf>
