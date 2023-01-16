@@ -120,6 +120,10 @@ struct Verify {
     #[clap(long = "compile-all")]
     compile_all: bool,
 
+    /// if set will skip all interactive questions
+    #[clap(long = "assume-yes", short = 'y')]
+    assume_yes: bool,
+
     #[clap(long = "api-key")]
     api_key: Option<String>,
     #[clap(long)]
@@ -275,6 +279,7 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
             .iter()
             .map(|s| s.path.to_string_lossy())
             .collect::<Vec<_>>();
+
         let prompt = Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt(format!(
                 "Select source which matches {} with space",
@@ -283,6 +288,7 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
             .items(&matched_sources_list)
             .interact()
             .with_context(|| "Failed to select sources")?;
+
         let source = matched_sources[prompt];
         let source_path = u.project_root.join(
             source
@@ -392,68 +398,6 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
     Ok(())
 }
 
-fn handle_info(api_url: String) -> Result<()> {
-    let (supported_linkers, supported_compilers) = get_supported_versions(&api_url)?;
-
-    cyan_ln!("\nSupported linkers:");
-    for linker in supported_linkers {
-        green_ln!("- {}", linker);
-    }
-
-    cyan_ln!("\nSupported compilers");
-
-    for (version, commit) in supported_compilers {
-        green!("- {} ", version);
-        cyan!("Commit: ");
-        green_ln!("{}", commit);
-    }
-
-    Ok(())
-}
-
-type SupportedVersions = (Vec<Version>, Vec<(Version, String)>);
-
-fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
-    let client = default_client()?;
-
-    let supported_linkers: Vec<String> = client
-        .get(format!("{}/supported/linker", api_url))
-        .send()
-        .context("Failed to get supported linkers")?
-        .json()
-        .context("Failed to router supported linkers")?;
-
-    let mut supported_linkers = supported_linkers
-        .into_iter()
-        .map(|linker| Version::parse(&linker).expect("Failed to router linker version"))
-        .collect::<Vec<Version>>();
-    supported_linkers.sort();
-
-    let supported_compilers: HashMap<String, String> = client
-        .get(format!("{}/supported/solc", api_url))
-        .send()
-        .context("Failed to get supported compilers")?
-        .json()
-        .context("Failed to router supported compilers")?;
-
-    let mut supported_compilers = supported_compilers
-        .into_iter()
-        .map(|(commit, version)| {
-            let version = version
-                .split("Version: ")
-                .last()
-                .unwrap()
-                .split('+')
-                .next()
-                .unwrap();
-            let version = Version::parse(version).expect("Failed to router compiler version");
-            (version, commit)
-        })
-        .collect::<Vec<_>>();
-    supported_compilers.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok((supported_linkers, supported_compilers))
-}
-
 fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
     args.verify(&api_url)?;
 
@@ -522,13 +466,18 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
 
     serde_json::to_writer_pretty(outfile, &compile_request)?;
     green_ln!("✅ All done");
-    yellow_ln!("⚠️  Don't forget to check the output file before submission");
-    cyan_ln!("File: {}", outfile_path.display());
 
-    let submit = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-        .with_prompt("Do you want to submit this request to the verifier?")
-        .interact()
-        .with_context(|| "Failed to confirm")?;
+    let submit = if !args.assume_yes {
+        yellow_ln!("⚠️  Don't forget to check the output file before submission");
+        cyan_ln!("File: {}", outfile_path.display());
+
+        dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Do you want to submit this request to the verifier?")
+            .interact()
+            .with_context(|| "Failed to confirm")?
+    } else {
+        true
+    };
 
     if submit {
         let client = default_client()?;
@@ -566,14 +515,79 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
 
             let json = serde_json::from_str(&text).context("Invalid server answer")?;
             render_markdown(json, checked)?;
+            std::fs::remove_file(outfile_path)?;
         } else {
             red_ln!("❌ Failed to send request: {:?} ", resp.status());
             let text = resp.text().context("Failed to get server response")?;
             red_ln!("Response: {}", text);
         }
+    } else {
+        yellow_ln!("Verification request was not submitted")
     }
 
     Ok(())
+}
+
+fn handle_info(api_url: String) -> Result<()> {
+    let (supported_linkers, supported_compilers) = get_supported_versions(&api_url)?;
+
+    cyan_ln!("\nSupported linkers:");
+    for linker in supported_linkers {
+        green_ln!("- {}", linker);
+    }
+
+    cyan_ln!("\nSupported compilers");
+
+    for (version, commit) in supported_compilers {
+        green!("- {} ", version);
+        cyan!("Commit: ");
+        green_ln!("{}", commit);
+    }
+
+    Ok(())
+}
+
+type SupportedVersions = (Vec<Version>, Vec<(Version, String)>);
+
+fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
+    let client = default_client()?;
+
+    let supported_linkers: Vec<String> = client
+        .get(format!("{}/supported/linker", api_url))
+        .send()
+        .context("Failed to get supported linkers")?
+        .json()
+        .context("Failed to router supported linkers")?;
+
+    let mut supported_linkers = supported_linkers
+        .into_iter()
+        .map(|linker| Version::parse(&linker).expect("Failed to router linker version"))
+        .collect::<Vec<Version>>();
+    supported_linkers.sort();
+
+    let supported_compilers: HashMap<String, String> = client
+        .get(format!("{}/supported/solc", api_url))
+        .send()
+        .context("Failed to get supported compilers")?
+        .json()
+        .context("Failed to router supported compilers")?;
+
+    let mut supported_compilers = supported_compilers
+        .into_iter()
+        .map(|(commit, version)| {
+            let version = version
+                .split("Version: ")
+                .last()
+                .unwrap()
+                .split('+')
+                .next()
+                .unwrap();
+            let version = Version::parse(version).expect("Failed to router compiler version");
+            (version, commit)
+        })
+        .collect::<Vec<_>>();
+    supported_compilers.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok((supported_linkers, supported_compilers))
 }
 
 fn resolve_sources(
