@@ -1,6 +1,6 @@
 use crate::place_error::PlaceError;
 use crate::Versions;
-use axum::http::StatusCode;
+use http::StatusCode;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {
