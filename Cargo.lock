@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "everscan-verify"
-version = "1.6.8"
+version = "1.6.9"
 dependencies = [
  "anyhow",
  "base64",
@@ -493,6 +493,7 @@ dependencies = [
  "hex",
  "hmac-sha256",
  "openssl",
+ "os_str_bytes",
  "pathdiff",
  "pest",
  "pest_derive",
@@ -1139,6 +1140,9 @@ name = "os_str_bytes"
 version = "6.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b7820b9daea5457c9f21c69448905d723fbd21136ccf521748f23fd49e723ee"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "parking_lot"

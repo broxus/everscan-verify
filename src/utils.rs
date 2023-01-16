@@ -1,29 +1,39 @@
 use std::{
     ffi::{OsStr, OsString},
-    os::unix::ffi::OsStrExt,
     path::Path,
 };
+
+use os_str_bytes::RawOsStr;
 
 pub fn file_prefix<P: AsRef<Path>>(path: P) -> Option<OsString> {
     let path = path.as_ref();
     path.file_name()
         .map(split_file_at_dot)
-        .map(|(before, _after)| before.to_os_string())
+        .map(|(before, _after)| before)
 }
 
-fn split_file_at_dot(file: &OsStr) -> (&OsStr, Option<&OsStr>) {
-    let slice = file.as_bytes();
+fn split_file_at_dot(file: &OsStr) -> (OsString, Option<OsString>) {
+    let file_raw = RawOsStr::new(file);
+    let slice = file_raw.as_raw_bytes();
     if slice == b".." {
-        return (file, None);
+        return (file.to_os_string(), None);
     }
 
     let i = match slice[1..].iter().position(|b| *b == b'.') {
         Some(i) => i + 1,
-        None => return (file, None),
+        None => return (file.to_os_string(), None),
     };
     let before = &slice[..i];
     let after = &slice[i + 1..];
-    (OsStr::from_bytes(before), Some(OsStr::from_bytes(after)))
+
+    let before = RawOsStr::assert_from_raw_bytes(before)
+        .to_os_str()
+        .to_os_string();
+    let after = RawOsStr::assert_from_raw_bytes(after)
+        .to_os_str()
+        .to_os_string();
+
+    (before, Some(after))
 }
 
 pub fn get_credentials(api_key: Option<String>, secret: Option<String>) -> (String, String) {
