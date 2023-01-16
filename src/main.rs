@@ -290,7 +290,7 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
                 .strip_prefix("/app/contracts/src/")
                 .context("Failed to get source path")?,
         );
-        let sources: Vec<_> = resolve_deps(&source_path, &include_paths)
+        let sources: Vec<_> = resolve_deps(source_path, &include_paths)
             .into_iter()
             .map(|x| Source {
                 content: std::fs::read_to_string(&x).expect("Failed to read source"),
@@ -302,14 +302,14 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
                 path: x,
             })
             .collect();
-        let sources = serde_json::to_value(&sources).expect("Failed to serialize sources");
+        let sources = serde_json::to_value(sources).expect("Failed to serialize sources");
 
         let req = DbContractInfo {
             abi: serde_json::from_str(&abi).context("Failed to parse abi")?,
             contract_name: source.path.to_string_lossy().to_string(),
             project_link: u.project_link.clone(),
             sources,
-            tvc: base64::encode(&tvc),
+            tvc: base64::encode(tvc),
             code_hash: "".to_string(),
             compiler_version: u.compiler_version.clone(),
             linker_version: u.linker_version.clone(),
@@ -347,7 +347,7 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
         let signature = hex::encode(hmac_sha256::HMAC::mac(concat.as_bytes(), secret.as_bytes()));
 
         let response = client
-            .put(&format!("{}/authorized/upload", api_url))
+            .put(format!("{}/authorized/upload", api_url))
             .header("X-API-KEY", &api_key)
             .header("signature", &signature)
             .header("nonce", &nonce.to_string())
@@ -417,7 +417,7 @@ fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
     let client = default_client()?;
 
     let supported_linkers: Vec<String> = client
-        .get(&format!("{}/supported/linker", api_url))
+        .get(format!("{}/supported/linker", api_url))
         .send()
         .context("Failed to get supported linkers")?
         .json()
@@ -430,7 +430,7 @@ fn get_supported_versions(api_url: &str) -> Result<SupportedVersions> {
     supported_linkers.sort();
 
     let supported_compilers: HashMap<String, String> = client
-        .get(&format!("{}/supported/solc", api_url))
+        .get(format!("{}/supported/solc", api_url))
         .send()
         .context("Failed to get supported compilers")?
         .json()
@@ -551,7 +551,7 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
         let url = api_url + "/authorized/compile";
 
         let resp = client
-            .post(&(url))
+            .post(url)
             .header("X-API-KEY", &api_key)
             .header("signature", &signature)
             .header("nonce", &nonce.to_string())

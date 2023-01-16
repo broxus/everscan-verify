@@ -184,7 +184,7 @@ mod test {
             "/home/odm3n/dev/work/bridge-contracts/node_modules",
         )];
         let res = resolve_deps(
-            &"/home/odm3n/dev/work/bridge-contracts/everscale/contracts/bridge/Bridge.sol",
+            "/home/odm3n/dev/work/bridge-contracts/everscale/contracts/bridge/Bridge.sol",
             &paths,
         );
         dbg!(res);
