@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "everscan-verify"
-version = "1.6.10"
+version = "1.6.11"
 dependencies = [
  "anyhow",
  "base64",
@@ -436,6 +436,7 @@ dependencies = [
  "hmac-sha256",
  "openssl",
  "os_str_bytes",
+ "path-slash",
  "pathdiff",
  "pest",
  "pest_derive",
@@ -1121,6 +1122,12 @@ dependencies = [
  "smallvec",
  "windows-sys",
 ]
+
+[[package]]
+name = "path-slash"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e91099d4268b0e11973f036e885d652fb0b21fedcf69738c627f94db6a44f42"
 
 [[package]]
 name = "pathdiff"

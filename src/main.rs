@@ -21,6 +21,7 @@ use walkdir::DirEntry;
 
 use everscan_verify::utils;
 use everscan_verify::{get_paths, resolve_deps, ContractPath};
+use path_slash::PathExt as _;
 use shared_models::{
     CompileRequest, CompileResponse, CompilerInfo, LinkerInfo, Source, SourceType,
 };
@@ -457,7 +458,13 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
         },
         license: args.license,
         audit_url: args.audit_url,
-        sources: contracts,
+        sources: contracts
+            .into_iter()
+            .map(|mut x| {
+                x.path = PathBuf::from(x.path.to_slash_lossy().as_ref());
+                x
+            })
+            .collect(),
         project_link: args.project_link,
         linker: LinkerInfo {
             version: args.linker_version,
@@ -910,10 +917,12 @@ impl ContractInfo {
                 let import_path = update_abs_path(&import_path, lib_path, project_root)
                     .context("Failed updating import")?;
                 let new_path = get_relative_path(&self.path, &import_path)?;
+                let new_path = new_path.to_slash().context("Failed to convert path")?;
 
                 self.content
-                    .replace_range(import.start..import.end, &new_path.to_string_lossy());
+                    .replace_range(import.start..import.end, &new_path);
 
+                let new_path = PathBuf::from(new_path.as_ref());
                 remaped_list.insert(new_path);
                 continue 'outer;
             }
