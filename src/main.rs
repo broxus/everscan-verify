@@ -13,7 +13,7 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArra
 use crossterm::style::Stylize;
 use dialoguer::Select;
 use pathdiff::diff_paths;
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use spinners::Spinner;
@@ -134,7 +134,9 @@ struct Verify {
 impl Verify {
     pub fn verify(&mut self, url: &str) -> Result<()> {
         let (supported_linkers, supported_compilers) = get_supported_versions(url)?;
-
+        if spdx::license_id(&self.license).is_none() {
+            anyhow::bail!("Invalid license {}", self.license);
+        }
         let is_ok_compiler = supported_compilers
             .iter()
             .any(|(_, commit)| commit == &self.compiler_version);
@@ -487,35 +489,7 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
     };
 
     if submit {
-        let client = default_client()?;
-
-        let mut spinner = Spinner::with_timer(
-            spinners::Spinners::TimeTravel,
-            "Waiting for verification result...".to_string(),
-        );
-
-        let body_bytes = serde_json::to_string(&compile_request)?;
-        let hash = hex::encode(hmac_sha256::Hash::hash(body_bytes.as_bytes()));
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
-        let concat = format!("{}{}{}", &api_key, &hash, nonce);
-        let signature = hex::encode(hmac_sha256::HMAC::mac(concat.as_bytes(), secret.as_bytes()));
-
-        let url = api_url + "/authorized/compile";
-
-        let resp = client
-            .post(url)
-            .header("X-API-KEY", &api_key)
-            .header("signature", &signature)
-            .header("nonce", &nonce.to_string())
-            .json(&compile_request)
-            .send()
-            .context("Failed to send request")?;
-
-        spinner.stop_with_newline();
+        let resp = send_request(api_url, &api_key, &secret, &compile_request)?;
 
         if resp.status().is_success() {
             let text = resp.text().context("Failed to get server response")?;
@@ -533,6 +507,44 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn send_request(
+    api_url: String,
+    api_key: &str,
+    secret: &str,
+    compile_request: &CompileRequest,
+) -> Result<Response> {
+    let client = default_client()?;
+
+    let mut spinner = Spinner::with_timer(
+        spinners::Spinners::TimeTravel,
+        "Waiting for verification result...".to_string(),
+    );
+
+    let body_bytes = serde_json::to_string(&compile_request)?;
+    let hash = hex::encode(hmac_sha256::Hash::hash(body_bytes.as_bytes()));
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    let concat = format!("{}{}{}", &api_key, &hash, nonce);
+    let signature = hex::encode(hmac_sha256::HMAC::mac(concat.as_bytes(), secret.as_bytes()));
+
+    let url = api_url + "/authorized/compile";
+
+    let resp = client
+        .post(url)
+        .header("X-API-KEY", api_key)
+        .header("signature", signature)
+        .header("nonce", &nonce.to_string())
+        .json(&compile_request)
+        .send()
+        .context("Failed to send request")?;
+    spinner.stop_with_newline();
+
+    Ok(resp)
 }
 
 fn handle_info(api_url: String) -> Result<()> {
@@ -1142,7 +1154,8 @@ mod test {
     };
 
     use shared_models::{
-        CompileOutput, CompileResponse, CompileResult, LinkerOutput, VerificationResponse,
+        CompileOutput, CompileRequest, CompileResponse, CompileResult, LinkerOutput,
+        VerificationResponse,
     };
 
     use crate::{
@@ -1235,5 +1248,21 @@ mod test {
     #[test]
     fn display() {
         render_markdown(test_data(), Default::default()).unwrap();
+    }
+
+    #[test]
+    fn fuck_windows() {
+        let sources = std::fs::read_to_string("sources.json").unwrap();
+        let source: CompileRequest = serde_json::from_str(&sources).unwrap();
+        let api_key = std::env::var("API_KEY").unwrap();
+        let secret = std::env::var("SECRET").unwrap();
+        let response = super::send_request(
+            "https://verify.everscan.io".to_string(),
+            &api_key,
+            &secret,
+            &source,
+        )
+        .unwrap();
+        dbg!(response);
     }
 }
