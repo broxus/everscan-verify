@@ -1,12 +1,12 @@
 [package]
 edition = "2021"
 name = "everscan-verify"
-version = "1.6.13"
+version = "1.6.14"
 
 [dependencies]
 
 anyhow = { version = "1.0.57", features = ["backtrace"] }
-base64 = "0.13.0"
+base64 = "0.21.0"
 clap = { version = "4.0.18", features = ["derive"] }
 comfy-table = "6.0.0"
 crossterm = "0.25.0"
@@ -26,6 +26,7 @@ openssl = { version = "0.10.44", features = ["vendored"] }
 os_str_bytes = "6.4.1"
 path-slash = "0.2.1"
 spdx = "0.10.0"
+ariadne = "0.1.5"
 
 [dependencies.serde]
 features = ["derive"]

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use base64::{engine::general_purpose, Engine};
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use ton_block::Deserializable;
 
@@ -58,7 +59,7 @@ impl LinkerOutput {
             self.code_hash = tvc
                 .code
                 .map(|x| x.repr_hash())
-                .map(|x| base64::encode(x.as_slice()));
+                .map(|x| general_purpose::STANDARD.encode(x.as_slice()));
         }
 
         Ok(())

@@ -7,8 +7,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use ariadne::{Label, Report, ReportKind};
+use base64::{engine::general_purpose, Engine as _};
 use clap::{Args, Parser};
-use colour::{cyan, cyan_ln, green, green_ln, grey_ln, magenta, red, red_ln, yellow, yellow_ln};
+use colour::{cyan, cyan_ln, green, green_ln, grey_ln, red, red_ln, yellow, yellow_ln};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use crossterm::style::Stylize;
 use dialoguer::Select;
@@ -318,7 +320,7 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
             contract_name: source.path.to_string_lossy().to_string(),
             project_link: u.project_link.clone(),
             sources,
-            tvc: base64::encode(tvc),
+            tvc: general_purpose::STANDARD.encode(tvc),
             code_hash: "".to_string(),
             compiler_version: u.compiler_version.clone(),
             linker_version: u.linker_version.clone(),
@@ -815,7 +817,7 @@ fn process_contract(
     let mut resolve_paths = vec![contract_dir.to_path_buf()];
     resolve_paths.extend(includes.iter().cloned());
 
-    let imports = get_canonical_paths(imports, &resolve_paths, true);
+    let imports = get_canonical_paths(imports, &resolve_paths, Some(&contract_path));
     for import in &imports {
         process_contract(
             &import.absolute_path,
@@ -922,7 +924,7 @@ impl ContractInfo {
 
         'outer: loop {
             let imports = get_paths(&self.content);
-            let imports = get_canonical_paths(imports, &resolve_paths, false);
+            let imports = get_canonical_paths(imports, &resolve_paths, None);
 
             for import in imports {
                 if remaped_list.contains(&import.old_path) {
@@ -993,7 +995,7 @@ impl Debug for ContractInfo {
 fn get_canonical_paths(
     paths: Vec<ContractPath>,
     resolve_paths: &[PathBuf],
-    initial_resolve: bool,
+    contract_path: Option<&Path>,
 ) -> Vec<Import> {
     paths
         .into_iter()
@@ -1011,13 +1013,40 @@ fn get_canonical_paths(
                     });
                 }
             }
-            if initial_resolve {
-                red!("Failed to resolve ");
-                cyan_ln!("{}", contract_import.path.display());
-                yellow!("Tip: ");
-                magenta!("Maybe you forgot to set ");
-                yellow_ln!("`--include-path`?");
+
+            if let Some(contract_path) = contract_path {
+                let path_str = contract_path.to_path_buf().display().to_string();
+                let contract_content = std::fs::read_to_string(contract_path).unwrap();
+                let sources = [(path_str.clone(), contract_content)];
+                let sources = ariadne::sources(sources.into_iter());
+                let tested_paths = resolve_paths
+                    .iter()
+                    .map(|p| p.join(&contract_import.path))
+                    .map(|x| x.display().to_string());
+
+                let pad = " ".repeat(5);
+                let tested_paths = tested_paths
+                    .map(|s| format!("{pad}{s}"))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                let note = format!("Checked paths:\n{}", tested_paths);
+                Report::build(ReportKind::Error, path_str.clone(), 34)
+                    .with_message("Failed to resolve import")
+                    .with_label(
+                        Label::new((
+                            path_str,
+                            contract_import.import_start..contract_import.import_end,
+                        ))
+                        .with_message("This import"),
+                    )
+                    .with_help("Maybe you forgot to set `--include-path`?")
+                    .with_note(note)
+                    .finish()
+                    .eprint(sources)
+                    .unwrap();
+                std::process::exit(1);
             }
+
             None
         })
         .collect()
