@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "everscan-verify"
-version = "1.6.11"
+version = "1.6.13"
 dependencies = [
  "anyhow",
  "base64",

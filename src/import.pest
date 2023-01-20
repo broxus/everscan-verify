@@ -22,8 +22,10 @@ ident = @{ ident_char+ }
 
 path = {("\"" ~ string_dquote ~ "\"") | ("'" ~ string_quote ~ "'")}
 rename = _{
-   "{" ~ ident ~ "as" ~ ident ~ ("," ~ ident ~ "as" ~ ident)*  ~ "}" ~ "from"
+"{" ~ ident ~ ("as" ~ ident)? ~ ("," ~ ident ~ ("as" ~ ident)?)* ~ "}" ~ "from"
 }
+
+
 import_expr = { "import" ~ rename? ~ path ~ ";"}
 
 imports = {SOI ~ (import_expr | ANY)+ ~ EOI}

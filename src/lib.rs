@@ -7,7 +7,6 @@ use pest::Parser;
 use pest_derive::Parser;
 pub mod utils;
 
-
 #[derive(Parser)]
 #[grammar = "import.pest"]
 struct ImportParser;
@@ -48,6 +47,7 @@ pub fn get_paths(input: &str) -> Vec<ContractPath> {
     paths
 }
 
+#[derive(Debug, Clone)]
 pub struct ContractPath {
     pub path: PathBuf,
     pub import_start: usize,
@@ -90,10 +90,12 @@ pub fn resolve_deps<P: AsRef<Path>>(contract_path: P, includes: &[PathBuf]) -> V
     }
 
     let mut visited = HashSet::new();
-    let contract_data = std::fs::read_to_string(contract_path.as_ref()).unwrap_or_else(|_|format!(
-        "Contract does not exist. Filename: {}",
-        contract_path.as_ref().display()
-    ));
+    let contract_data = std::fs::read_to_string(contract_path.as_ref()).unwrap_or_else(|_| {
+        format!(
+            "Contract does not exist. Filename: {}",
+            contract_path.as_ref().display()
+        )
+    });
     resolve_deps_inner(
         &mut visited,
         &contract_data,
@@ -117,6 +119,20 @@ mod test {
         let input =
             r#"import "../../../node_modules/@broxus/contracts/contracts/libraries/MsgFlag.sol";"#;
         ImportParser::parse(Rule::import_expr, input).unwrap();
+    }
+
+    #[test]
+    fn test_dens() {
+        let input = r#"import {Version} from "versionable/contracts/utils/Structs.sol";"#;
+        let paths = get_paths(input);
+        assert_eq!(paths.len(), 1);
+        let input =
+            r#"import {BaseMaster, SlaveData} from "versionable/contracts/BaseMaster.sol";"#;
+        let paths = get_paths(input);
+        assert_eq!(paths.len(), 1);
+        let input = r#"import {BaseSlave, Version, ErrorCodes as VersionableErrorCodes} from "versionable/contracts/BaseSlave.sol";";
+        let paths = get_paths(input);
+        assert_eq!(paths.len(), 1);
     }
 
     #[test]

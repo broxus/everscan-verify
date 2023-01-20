@@ -12,6 +12,7 @@ use colour::{cyan, cyan_ln, green, green_ln, grey_ln, magenta, red, red_ln, yell
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use crossterm::style::Stylize;
 use dialoguer::Select;
+use path_slash::PathExt as _;
 use pathdiff::diff_paths;
 use reqwest::blocking::{Client, Response};
 use semver::Version;
@@ -21,7 +22,6 @@ use walkdir::DirEntry;
 
 use everscan_verify::utils;
 use everscan_verify::{get_paths, resolve_deps, ContractPath};
-use path_slash::PathExt as _;
 use shared_models::{
     CompileRequest, CompileResponse, CompilerInfo, LinkerInfo, Source, SourceType,
 };
@@ -697,6 +697,7 @@ fn render_markdown(response: CompileResponse, checked_to_compile: HashSet<PathBu
     if response
         .failed_to_verify
         .iter()
+        .filter(|(_, res)| !res.compiler_output.stderr.contains("no output requested."))
         .any(|x| checked_to_compile.contains(x.0))
     {
         yellow_ln!("⚠️  These contracts failed to compile:");
@@ -705,10 +706,12 @@ fn render_markdown(response: CompileResponse, checked_to_compile: HashSet<PathBu
             .failed_to_verify
             .into_iter()
             .filter(|x| checked_to_compile.contains(&x.0))
+            .filter(|(_, res)| !res.compiler_output.stderr.contains("no output requested."))
         {
             println!("Contract path: {path}");
             println!("Compiler stdout:");
             yellow_ln!("{}\n", result.compiler_output.stdout);
+            println!("Compiler stderr:");
             yellow_ln!("{}\n", result.compiler_output.stderr);
 
             if let Some(out) = result.linker_output {
@@ -1154,8 +1157,7 @@ mod test {
     };
 
     use shared_models::{
-        CompileOutput, CompileRequest, CompileResponse, CompileResult, LinkerOutput,
-        VerificationResponse,
+        CompileOutput, CompileResponse, CompileResult, LinkerOutput, VerificationResponse,
     };
 
     use crate::{
@@ -1248,21 +1250,5 @@ mod test {
     #[test]
     fn display() {
         render_markdown(test_data(), Default::default()).unwrap();
-    }
-
-    #[test]
-    fn fuck_windows() {
-        let sources = std::fs::read_to_string("sources.json").unwrap();
-        let source: CompileRequest = serde_json::from_str(&sources).unwrap();
-        let api_key = std::env::var("API_KEY").unwrap();
-        let secret = std::env::var("SECRET").unwrap();
-        let response = super::send_request(
-            "https://verify.everscan.io".to_string(),
-            &api_key,
-            &secret,
-            &source,
-        )
-        .unwrap();
-        dbg!(response);
     }
 }
