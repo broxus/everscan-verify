@@ -9,7 +9,7 @@ anyhow = { version = "1.0.57", features = ["backtrace"] }
 base64 = "0.21.0"
 clap = { version = "4.0.18", features = ["derive"] }
 comfy-table = "6.0.0"
-crossterm = "0.25.0"
+crossterm = "0.26.1"
 dialoguer = { version = "0.10.1" }
 hex = "0.4.3"
 hmac-sha256 = "1.1.4"
