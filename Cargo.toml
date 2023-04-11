@@ -30,7 +30,7 @@ ariadne = "0.1.5"
 
 [dependencies.serde]
 features = ["derive"]
-version = "1.0.136"
+version = "1.0.160"
 
 [dependencies.shared-models]
 path = "shared-models"
