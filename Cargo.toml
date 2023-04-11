@@ -26,7 +26,7 @@ openssl = { version = "0.10.44", features = ["vendored"] }
 os_str_bytes = "6.4.1"
 path-slash = "0.2.1"
 spdx = "0.10.0"
-ariadne = "0.1.5"
+ariadne = "0.2.0"
 
 [dependencies.serde]
 features = ["derive"]
