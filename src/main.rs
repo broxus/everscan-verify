@@ -146,7 +146,7 @@ impl Verify {
         if !is_ok_compiler {
             red!("Compiler version");
             cyan!(" {} ", self.compiler_version);
-            red_ln!("is not supported",);
+            red_ln!("is not supported");
             let looking_similar = supported_compilers
                 .iter()
                 .filter(|(_, commit)| commit.starts_with(&self.compiler_version))
@@ -157,7 +157,7 @@ impl Verify {
                 self.compiler_version = if looking_similar.len() == 1 {
                     yellow!("Compiler ");
                     cyan!(" {} ", looking_similar[0].1);
-                    yellow_ln!("is looking similar. Using it.",);
+                    yellow_ln!("is looking similar. Using it.");
                     looking_similar[0].1.clone()
                 } else {
                     let choice = Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -376,7 +376,7 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
                 match e.status() {
                     Some(status) => {
                         if status.as_u16() == 409 {
-                            yellow_ln!("Contract {} already exists");
+                            yellow_ln!("Contract {} already exists", contract_base);
                         } else {
                             red_ln!("Failed to upload {}: {}", contract_base, e.to_string());
                             std::process::exit(1);
