@@ -22,7 +22,7 @@ spinners = { version = "4.1.0" }
 reqwest = { version = "0.11.16", default-features = false, features = ["blocking", "json", "native-tls", "gzip"] }
 walkdir = "2.3.3"
 colour = "0.7.0"
-openssl = { version = "0.10.50", features = ["vendored"] }
+openssl = { version = "0.10.54", features = ["vendored"] }
 os_str_bytes = "6.5.0"
 path-slash = "0.2.1"
 spdx = "0.10.1"
