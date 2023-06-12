@@ -1738,8 +1738,8 @@ dependencies = [
 
 [[package]]
 name = "ton_block"
-version = "1.7.14"
-source = "git+https://github.com/broxus/ton-labs-block.git#bf7a53587cc98da4b51b58f3c4160e8f85985159"
+version = "1.9.73"
+source = "git+https://github.com/broxus/ton-labs-block.git#9e40ea7291380c62da7b70dc7ba59cbe26be4cc6"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
@@ -1761,7 +1761,7 @@ dependencies = [
 [[package]]
 name = "ton_types"
 version = "1.10.2"
-source = "git+https://github.com/broxus/ton-labs-types.git#dea1147b9fa25153e20dc79d9f0141f325f3921a"
+source = "git+https://github.com/broxus/ton-labs-types.git#bb5ea019fb95def471b2e35c1d6d4f15a0d8fe61"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
