@@ -127,6 +127,11 @@ struct Verify {
     #[clap(long = "assume-yes", short = 'y')]
     assume_yes: bool,
 
+    /// Sources will be uploaded to the server for verification but data won't be stored in db.
+    /// Anonymous contracts can be converted to normal via verification without this flag set
+    #[clap(long = "anon-sources")]
+    anonymous_sources: bool,
+
     #[clap(long = "api-key")]
     api_key: Option<String>,
     #[clap(long)]
@@ -473,6 +478,7 @@ fn handle_verify(mut args: Verify, api_url: String) -> Result<()> {
         linker: LinkerInfo {
             version: args.linker_version,
         },
+        anonymous_sources: args.anonymous_sources,
     };
 
     serde_json::to_writer_pretty(outfile, &compile_request)?;
