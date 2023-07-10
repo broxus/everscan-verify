@@ -7,7 +7,7 @@ version = "1.6.16"
 
 anyhow = { version = "1.0.71", features = ["backtrace"] }
 base64 = "0.21.2"
-clap = { version = "4.3.5", features = ["derive"] }
+clap = { version = "4.3.11", features = ["derive"] }
 comfy-table = "7.0.1"
 crossterm = "0.26.1"
 dialoguer = { version = "0.10.4" }
