@@ -90,6 +90,7 @@ pub struct CompileRequest {
     pub license: String,
     pub audit_url: Option<String>,
     pub project_link: Option<String>,
+    #[serde(default)]
     pub anonymous_sources: bool,
 }
 
