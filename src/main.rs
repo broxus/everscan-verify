@@ -212,13 +212,36 @@ impl Verify {
 /// /external for external dependencies
 /// ```
 fn main() -> Result<()> {
-    let args = Cli::parse();
+    use crossterm::execute;
+    use crossterm::style::{Attribute, SetAttribute};
+    use signal_hook::{
+        consts::{SIGINT, SIGTERM},
+        iterator::Signals,
+    };
 
-    match args.subcommands {
+    //prepare signal handling
+    let mut signals = Signals::new([SIGTERM, SIGINT])?;
+    let attribute = SetAttribute(Attribute::Reset);
+    let reset_stdout = move || {
+        execute!(std::io::stdout(), attribute).expect("Failed to reset stdout");
+        execute!(std::io::stderr(), attribute).expect("Failed to reset stderr");
+    };
+
+    std::thread::spawn(move || {
+        signals.into_iter().next().expect("always returns Some");
+        reset_stdout();
+        std::process::exit(1);
+    });
+
+    let args = Cli::parse();
+    let res = match args.subcommands {
         Subcommands::Verify(v) => handle_verify(v, args.api_url),
         Subcommands::Info(_) => handle_info(args.api_url),
         Subcommands::Upload(u) => handle_upload(u, args.api_url),
-    }
+    };
+    reset_stdout();
+
+    res
 }
 
 fn handle_upload(u: Upload, api_url: String) -> Result<()> {
@@ -1024,7 +1047,7 @@ fn get_canonical_paths(
                 let path_str = contract_path.to_path_buf().display().to_string();
                 let contract_content = std::fs::read_to_string(contract_path).unwrap();
                 let sources = [(path_str.clone(), contract_content)];
-                let sources = ariadne::sources(sources.into_iter());
+                let sources = ariadne::sources(sources);
                 let tested_paths = resolve_paths
                     .iter()
                     .map(|p| p.join(&contract_import.path))
