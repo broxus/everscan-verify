@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "everscan-verify"
-version = "1.6.16"
+version = "1.6.17"
 dependencies = [
  "anyhow",
  "ariadne",

@@ -214,24 +214,27 @@ impl Verify {
 fn main() -> Result<()> {
     use crossterm::execute;
     use crossterm::style::{Attribute, SetAttribute};
-    use signal_hook::{
-        consts::{SIGINT, SIGTERM},
-        iterator::Signals,
-    };
 
     //prepare signal handling
-    let mut signals = Signals::new([SIGTERM, SIGINT])?;
     let attribute = SetAttribute(Attribute::Reset);
     let reset_stdout = move || {
         execute!(std::io::stdout(), attribute).expect("Failed to reset stdout");
         execute!(std::io::stderr(), attribute).expect("Failed to reset stderr");
     };
 
-    std::thread::spawn(move || {
-        signals.into_iter().next().expect("always returns Some");
-        reset_stdout();
-        std::process::exit(1);
-    });
+    #[cfg(not(target_os = "windows"))]
+    {
+        use signal_hook::{
+            consts::{SIGINT, SIGTERM},
+            iterator::Signals,
+        };
+        let mut signals = Signals::new([SIGTERM, SIGINT])?;
+        std::thread::spawn(move || {
+            signals.into_iter().next().expect("always returns Some");
+            reset_stdout();
+            std::process::exit(1);
+        });
+    }
 
     let args = Cli::parse();
     let res = match args.subcommands {
