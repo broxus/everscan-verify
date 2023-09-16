@@ -1,15 +1,14 @@
 [package]
 edition = "2021"
 name = "everscan-verify"
-version = "1.6.16"
+version = "1.6.17"
 
 [dependencies]
-
 anyhow = { version = "1.0.71", features = ["backtrace"] }
 base64 = "0.21.2"
 clap = { version = "4.3.5", features = ["derive"] }
 comfy-table = "7.0.1"
-crossterm = "0.26.1"
+crossterm = "0.27"
 dialoguer = { version = "0.10.4" }
 hex = "0.4.3"
 hmac-sha256 = "1.1.7"
@@ -27,6 +26,7 @@ os_str_bytes = "6.5.1"
 path-slash = "0.2.1"
 spdx = "0.10.1"
 ariadne = "0.3.0"
+signal-hook = "0.3.17"
 
 [dependencies.serde]
 features = ["derive"]
