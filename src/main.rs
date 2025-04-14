@@ -8,11 +8,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use ariadne::{Label, Report, ReportKind};
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use clap::{Args, Parser};
 use colour::{cyan, cyan_ln, green, green_ln, grey_ln, red, red_ln, yellow, yellow_ln};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
-use crossterm::style::Stylize;
+use comfy_table::{ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use dialoguer::Select;
 use path_slash::PathExt as _;
 use pathdiff::diff_paths;
@@ -23,7 +22,7 @@ use spinners::Spinner;
 use walkdir::DirEntry;
 
 use everscan_verify::utils;
-use everscan_verify::{get_paths, resolve_deps, ContractPath};
+use everscan_verify::{ContractPath, get_paths, resolve_deps};
 use shared_models::{
     CompileRequest, CompileResponse, CompilerInfo, LinkerInfo, Source, SourceType,
 };
@@ -50,33 +49,47 @@ enum Subcommands {
 
 #[derive(Args, Debug)]
 struct Upload {
-    /// Path to the contracts directory
-    #[clap(short, long)]
-    build: PathBuf,
+    /// Path to the directory containing build artifacts (.abi.json, .tvc files)
+    #[clap(short, long, value_name = "ARTIFACTS_DIR")]
+    artifacts_dir: PathBuf,
 
-    #[clap(short, long)]
-    project_root: PathBuf,
+    /// Path to the project source directory
+    #[clap(short, long, value_name = "SOURCE_DIR")]
+    source_dir: PathBuf,
 
     /// SPDX license identifier. More info: https://spdx.org/licenses/
     #[clap(short = 'l', long = "license")]
     license: String,
+
+    /// URL to the audit report
     #[clap(short = 'a', long = "audit-url")]
     audit_url: Option<String>,
-    /// Compiler commit hash (e.g. bbbbeca6e6f22f9a2cd3f30021ca83aac1a1428d). All versions could be obtained with `tonscan-path-resolver info`
+
+    /// Compiler commit hash (e.g. bbbbeca6e6f22f9a2cd3f30021ca83aac1a1428d). All versions could be obtained with `everscan-verify info`
     #[clap(long = "compiler-version")]
     compiler_version: String,
+
     /// Link to the project info
     #[clap(long = "project-link")]
     project_link: Option<String>,
-    /// Linker version (e.g.  0.15.35) All versions could be obtained with `tonscan-path-resolver info`
+
+    /// Linker version (e.g. 0.15.35) All versions could be obtained with `everscan-verify info`
     #[clap(long = "linker-version")]
     linker_version: String,
+
     /// Include path. Works like in solc
     #[clap(short = 'I', long = "include-path")]
-    include_paths: Option<Vec<PathBuf>>,
+    include_paths: Vec<PathBuf>,
 
+    /// Sources will be uploaded to the server but data won't be stored in db
+    #[clap(long = "anon-sources")]
+    anonymous_sources: bool,
+
+    /// API key for authentication
     #[clap(long = "api-key")]
     api_key: Option<String>,
+
+    /// Secret for authentication
     #[clap(long)]
     secret: Option<String>,
 }
@@ -249,141 +262,220 @@ fn main() -> Result<()> {
 
 fn handle_upload(u: Upload, api_url: String) -> Result<()> {
     #[derive(Serialize)]
-    pub struct DbContractInfo {
+    pub struct UploadPayload {
         pub abi: serde_json::Value,
         pub contract_name: String,
         pub project_link: Option<String>,
         pub sources: serde_json::Value,
-
         pub tvc: String,
         pub code_hash: String,
-
         pub compiler_version: String,
         pub linker_version: String,
+        pub license: String,
+        pub audit_url: Option<String>,
+        pub anonymous_sources: bool,
     }
 
+    // Get credentials
     let (api_key, secret) = utils::get_credentials(u.api_key, u.secret);
 
-    let json_files = walkdir::WalkDir::new(&u.build)
+    // Validate input paths
+    let artifacts_dir = u.artifacts_dir.canonicalize().with_context(|| {
+        format!(
+            "Failed to find artifacts directory: {}",
+            u.artifacts_dir.display()
+        )
+    })?;
+
+    let source_dir = u.source_dir.canonicalize().with_context(|| {
+        format!(
+            "Failed to find source directory: {}",
+            u.source_dir.display()
+        )
+    })?;
+
+    if !artifacts_dir.is_dir() {
+        anyhow::bail!(
+            "Artifacts path is not a directory: {}",
+            artifacts_dir.display()
+        );
+    }
+
+    if !source_dir.is_dir() {
+        anyhow::bail!("Source path is not a directory: {}", source_dir.display());
+    }
+
+    // Discover artifacts
+    println!("Discovering artifacts in {}", artifacts_dir.display());
+
+    // Find all .abi.json files
+    let json_files: Vec<PathBuf> = walkdir::WalkDir::new(&artifacts_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter_map(|e| match e.path().extension() {
-            Some(a) if a.to_string_lossy() == "json" => Some(e),
-            _ => None,
+        .filter(|e| {
+            let path = e.path();
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.ends_with(".abi.json"))
+                    .unwrap_or(false)
         })
-        .filter_map(|e| {
-            e.path()
-                .canonicalize()
-                .ok()
-                .map(|p| p.to_string_lossy().to_string())
-        })
-        .collect::<Vec<_>>();
+        .map(|e| e.path().to_path_buf())
+        .collect();
 
-    let idxs = dialoguer::MultiSelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
-        .with_prompt("Select contracts to verify with space")
-        .items(&json_files)
-        .interact()
-        .with_context(|| "Failed to select contracts")?;
+    if json_files.is_empty() {
+        anyhow::bail!("No .abi.json files found in {}", artifacts_dir.display());
+    }
 
-    let include_paths = u.include_paths.unwrap_or_default();
-    let sources = resolve_sources(&u.project_root, &include_paths, false)?;
-    // EverFarmPool.abi.json  EverFarmPool.base64  EverFarmPool.code  EverFarmPool.tvc
+    println!("Found {} .abi.json files", json_files.len());
+
+    // Resolve sources
+    println!("Resolving source files from {}", source_dir.display());
+    let sources = resolve_sources(&source_dir, &u.include_paths, false)
+        .with_context(|| "Failed to resolve source files")?;
+
+    println!("Found {} source files", sources.len());
 
     let client = default_client()?;
-    for idx in idxs {
-        let abi_path = json_files[idx].clone();
-        let tvc_path = abi_path.replace("abi.json", "tvc");
-        let contract_base = if let Some(p) = utils::file_prefix(&abi_path) {
-            p.to_string_lossy().to_string()
-        } else {
-            yellow_ln!("Failed to get contract base name for {abi_path}");
-            continue;
+
+    let mut success_count = 0;
+    let mut already_exists_count = 0;
+    let mut failed_count = 0;
+
+    // Process each artifact
+    for abi_path in &json_files {
+        // Get contract base name
+        let contract_base = match utils::file_prefix(abi_path) {
+            Some(p) => p.to_string_lossy().to_string(),
+            None => {
+                eprintln!(
+                    "Failed to get contract base name for {}",
+                    abi_path.display()
+                );
+                failed_count += 1;
+                continue;
+            }
         };
 
-        let abi = std::fs::read_to_string(&abi_path).context("Failed to read abi")?;
-        let tvc = std::fs::read(&tvc_path)
-            .with_context(|| format!("Failed to read tvc with path: {}", tvc_path))?;
-
-        let matched_sources = sources
-            .iter()
-            .filter_map(|s| {
-                (utils::file_prefix(&s.path)?.to_string_lossy() == contract_base).then_some(s)
-            })
-            .collect::<Vec<_>>();
-
-        let matched_sources_list = matched_sources
-            .iter()
-            .map(|s| s.path.to_string_lossy())
-            .collect::<Vec<_>>();
-
-        let prompt = Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt(format!(
-                "Select source which matches {} with space",
-                contract_base
-            ))
-            .items(&matched_sources_list)
-            .interact()
-            .with_context(|| "Failed to select sources")?;
-
-        let source = matched_sources[prompt];
-        let source_path = u.project_root.join(
-            source
-                .path
-                .strip_prefix("/app/contracts/src/")
-                .context("Failed to get source path")?,
-        );
-        let sources: Vec<_> = resolve_deps(source_path, &include_paths)
-            .into_iter()
-            .map(|x| Source {
-                content: std::fs::read_to_string(&x).expect("Failed to read source"),
-                source_type: if x == source.path {
-                    SourceType::VerifyTarget
-                } else {
-                    SourceType::Dependency
-                },
-                path: x,
-            })
-            .collect();
-        let sources = serde_json::to_value(sources).expect("Failed to serialize sources");
-
-        let req = DbContractInfo {
-            abi: serde_json::from_str(&abi).context("Failed to parse abi")?,
-            contract_name: source.path.to_string_lossy().to_string(),
-            project_link: u.project_link.clone(),
-            sources,
-            tvc: general_purpose::STANDARD.encode(tvc),
-            code_hash: "".to_string(),
-            compiler_version: u.compiler_version.clone(),
-            linker_version: u.linker_version.clone(),
-        };
-
-        yellow_ln!("Check that source and artifacts are the same before submission");
-
-        green_ln!("Contract path: {}", source.path.to_string_lossy());
-        green_ln!("Abi path: {}", abi_path.clone());
-        green_ln!("Code path: {}", format!("{}.code", contract_base));
-        green_ln!("Tvc path: {}", format!("{}.tvc", contract_base).magenta());
-
-        let res = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("Are you sure you want to submit this contract?")
-            .interact()
-            .with_context(|| "Failed to confirm contract")?;
-
-        if !res {
-            yellow_ln!("Skipping contract");
+        // Find corresponding .tvc file
+        let tvc_path = abi_path.with_file_name(format!("{}.tvc", contract_base));
+        if !tvc_path.exists() {
+            println!(
+                "Missing TVC file for {}: {}",
+                contract_base,
+                tvc_path.display()
+            );
+            failed_count += 1;
             continue;
         }
-        let mut spinner = Spinner::with_timer(
-            spinners::Spinners::TimeTravel,
-            "Submitting contract".to_string(),
-        );
 
-        let body_bytes = serde_json::to_string(&req)?;
+        println!("Processing contract: {}", contract_base);
+
+        // Find matching source file
+        let matched_sources: Vec<&Source> = sources
+            .iter()
+            .filter_map(|s| {
+                utils::file_prefix(&s.path)
+                    .map(|prefix| (prefix.to_string_lossy() == contract_base, s))
+                    .filter(|(matches, _)| *matches)
+                    .map(|(_, s)| s)
+            })
+            .collect();
+
+        if matched_sources.is_empty() {
+            println!("No matching source file found for {}", contract_base);
+            failed_count += 1;
+            continue;
+        }
+
+        if matched_sources.len() > 1 {
+            println!(
+                "Multiple matching source files found for {}:",
+                contract_base
+            );
+            for source in &matched_sources {
+                println!("  {}", source.path.display());
+            }
+            println!("Using the first match");
+        }
+
+        let source = matched_sources[0];
+
+        // Read artifacts
+        let abi = match std::fs::read_to_string(abi_path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Failed to read ABI file {}: {}", abi_path.display(), e);
+                failed_count += 1;
+                continue;
+            }
+        };
+
+        let abi_value = match serde_json::from_str::<serde_json::Value>(&abi) {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("Failed to parse ABI JSON {}: {}", abi_path.display(), e);
+                failed_count += 1;
+                continue;
+            }
+        };
+
+        let tvc = match std::fs::read(&tvc_path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Failed to read TVC file {}: {}", tvc_path.display(), e);
+                failed_count += 1;
+                continue;
+            }
+        };
+
+        // Resolve dependencies
+        let source_path = source.path.clone();
+        let deps = resolve_deps(source_path.clone(), &u.include_paths);
+
+        // Prepare sources payload
+        let sources_payload: Vec<Source> = deps
+            .into_iter()
+            .map(|path| {
+                let content = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|_| format!("Failed to read source file: {}", path.display()));
+
+                Source {
+                    content,
+                    source_type: if path == source_path {
+                        SourceType::VerifyTarget
+                    } else {
+                        SourceType::Dependency
+                    },
+                    path,
+                }
+            })
+            .collect();
+
+        let sources_value =
+            serde_json::to_value(&sources_payload).expect("Failed to serialize sources");
+
+        // Construct upload payload
+        let payload = UploadPayload {
+            abi: abi_value,
+            contract_name: source.path.to_string_lossy().to_string(),
+            project_link: u.project_link.clone(),
+            sources: sources_value,
+            tvc: general_purpose::STANDARD.encode(tvc),
+            code_hash: "".to_string(), // Server will calculate this
+            compiler_version: u.compiler_version.clone(),
+            linker_version: u.linker_version.clone(),
+            license: u.license.clone(),
+            audit_url: u.audit_url.clone(),
+            anonymous_sources: u.anonymous_sources,
+        };
+
+        println!("Uploading contract: {}", contract_base);
+
+        let body_bytes = serde_json::to_string(&payload)?;
         let hash = hex::encode(hmac_sha256::Hash::hash(body_bytes.as_bytes()));
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
 
         let concat = format!("{}{}{}", &api_key, &hash, nonce);
         let signature = hex::encode(hmac_sha256::HMAC::mac(concat.as_bytes(), secret.as_bytes()));
@@ -393,43 +485,61 @@ fn handle_upload(u: Upload, api_url: String) -> Result<()> {
             .header("X-API-KEY", &api_key)
             .header("signature", &signature)
             .header("nonce", &nonce.to_string())
-            .json(&req)
+            .json(&payload)
             .send();
-        spinner.stop_with_newline();
-        let response = match response {
-            Ok(r) => r,
+
+        match response {
+            Ok(r) => {
+                let status = r.status();
+                if status.is_success() {
+                    let code_hash = r.text().unwrap_or_default();
+                    println!(
+                        "✅ Successfully uploaded {}. Code hash: {}",
+                        contract_base, code_hash
+                    );
+                    success_count += 1;
+                } else if status.as_u16() == 409 {
+                    println!("⚠️  Contract {} already exists", contract_base);
+                    already_exists_count += 1;
+                } else {
+                    let error_text = r.text().unwrap_or_default();
+                    println!(
+                        "❌ Failed to upload {}: HTTP {} - {}",
+                        contract_base, status, error_text
+                    );
+                    failed_count += 1;
+                }
+            }
             Err(e) => {
                 if e.is_connect() {
-                    red_ln!("Failed to connect to server: {:?}", e);
-                    std::process::exit(1);
+                    anyhow::bail!("Failed to connect to server: {}", e);
                 }
 
                 match e.status() {
                     Some(status) => {
                         if status.as_u16() == 409 {
-                            yellow_ln!("Contract {} already exists", contract_base);
+                            println!("⚠️  Contract {} already exists", contract_base);
+                            already_exists_count += 1;
                         } else {
-                            red_ln!("Failed to upload {}: {}", contract_base, e.to_string());
-                            std::process::exit(1);
+                            println!("❌ Failed to upload {}: {} - {}", contract_base, status, e);
+                            failed_count += 1;
                         }
                     }
                     None => {
-                        red_ln!("Failed to upload {}: {}", contract_base, e.to_string());
-                        std::process::exit(1);
+                        println!("❌ Failed to upload {}: {}", contract_base, e);
+                        failed_count += 1;
                     }
                 }
-                continue;
             }
-        };
-
-        if response.status().as_u16() == 201 {
-            green_ln!(
-                "Uploaded {}. Code hash: {}",
-                contract_base,
-                response.text()?
-            );
         }
     }
+
+    // Print summary
+    println!("\nUpload Summary:");
+    println!("  ✅ Successfully uploaded: {}", success_count);
+    println!("  ⚠️  Already existed: {}", already_exists_count);
+    println!("  ❌ Failed: {}", failed_count);
+    println!("  📊 Total processed: {}", json_files.len());
 
     Ok(())
 }
@@ -1194,11 +1304,7 @@ where
             break;
         }
     }
-    if found {
-        Some(final_path)
-    } else {
-        None
-    }
+    if found { Some(final_path) } else { None }
 }
 
 fn get_relative_path(contract_path: &Path, import_path: &Path) -> Result<PathBuf> {
@@ -1222,7 +1328,7 @@ mod test {
     };
 
     use crate::{
-        get_relative_path, render_markdown, update_abs_path, ClassifiedImports, ImportKind,
+        ClassifiedImports, ImportKind, get_relative_path, render_markdown, update_abs_path,
     };
 
     #[test]
