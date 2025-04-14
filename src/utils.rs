@@ -14,7 +14,7 @@ pub fn file_prefix<P: AsRef<Path>>(path: P) -> Option<OsString> {
 
 fn split_file_at_dot(file: &OsStr) -> (OsString, Option<OsString>) {
     let file_raw = RawOsStr::new(file);
-    let slice = file_raw.as_raw_bytes();
+    let slice = file_raw.as_encoded_bytes();
     if slice == b".." {
         return (file.to_os_string(), None);
     }
@@ -26,11 +26,11 @@ fn split_file_at_dot(file: &OsStr) -> (OsString, Option<OsString>) {
     let before = &slice[..i];
     let after = &slice[i + 1..];
 
-    let before = RawOsStr::assert_from_raw_bytes(before)
-        .to_os_str()
+    let before = RawOsStr::assert_cow_from_raw_bytes(before)
+        .as_os_str()
         .to_os_string();
-    let after = RawOsStr::assert_from_raw_bytes(after)
-        .to_os_str()
+    let after = RawOsStr::assert_cow_from_raw_bytes(after)
+        .as_os_str()
         .to_os_string();
 
     (before, Some(after))

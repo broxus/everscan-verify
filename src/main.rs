@@ -1301,13 +1301,6 @@ mod test {
         }
     }
 
-    // #[test]
-    // fn md_generate() {
-    //     let md = render_markdown(test_data()).unwrap();
-    //     println!("{}", md);
-    //     assert_eq!(md, include_str!("../test/output.md"));
-    // }
-
     #[test]
     fn display() {
         render_markdown(test_data(), Default::default()).unwrap();
