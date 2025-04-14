@@ -1,198 +1,186 @@
 on:
   push:
     tags:
-      - "v*" # Run when tag matches v*, i.e. v1.0, v20.15.10
-
+        - 'v*'
 name: Release
 
 env:
   RELEASE_BIN: everscan-verify
   RELEASE_DIR: artifacts
-  GITHUB_REF: "${{ github.ref }}"
   MACOS_TARGET: x86_64-apple-darwin
   LINUX_TARGET: x86_64-unknown-linux-musl
   WINDOWS_TARGET: x86_64-pc-windows-msvc
-  
-  # Space separated paths to include in the archive.
   RELEASE_ADDS: README.md
 
 jobs:
   build:
-    name: Build artifacts
+    name: Build artifacts (${{ matrix.build }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        build: [linux, macos, everscan-verifyjs]
         include:
           - build: linux
             os: ubuntu-latest
             rust: stable
+            target: x86_64-unknown-linux-musl
+            archive_ext: tar.gz
           - build: macos
             os: macos-latest
             rust: stable
-          - build: everscan-verifyjs
-            os: ubuntu-latest
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
           - build: windows
             os: windows-latest
             rust: stable
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+          - build: everscan-verifyjs
+            os: ubuntu-latest
+            archive_ext: tar.gz
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: Swatinem/rust-cache@v2
-      
-      - name: Query version number
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        if: matrix.rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Get version from tag
         id: get_version
         shell: bash
         run: |
-          echo "using version tag ${GITHUB_REF:10}"
-          echo ::set-output name=version::"${GITHUB_REF:10}"
+          VERSION_TAG="${GITHUB_REF#refs/tags/}"
+          echo "Using version tag: $VERSION_TAG"
+          echo "version=$VERSION_TAG" >> $GITHUB_OUTPUT
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         if: matrix.rust
+        shell: bash
         run: |
           rustup update ${{ matrix.rust }} --no-self-update
           rustup default ${{ matrix.rust }}
+          if [[ "${{ matrix.target }}" != "" && "$(rustc -vV | grep host)" != *"${{ matrix.target }}"* ]]; then
+             rustup target add ${{ matrix.target }}
+          fi
 
-      - name: Install musl-tools (Linux)
-        if: matrix.build == 'linux'
+      - name: Install build dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -y
-          sudo apt-get install musl-tools -y
+          if [[ "${{ matrix.build }}" == "linux" ]]; then
+            sudo apt-get install -y musl-tools
+          fi
+          sudo apt-get install -y p7zip-full
 
-      - name: Install p7zip (MacOS)
-        if: matrix.build == 'macos'
+      - name: Install build dependencies (MacOS)
+        if: matrix.os == 'macos-latest'
         run: brew install p7zip
 
-      - name: Build (Linux)
-        if: matrix.build == 'linux'
-        run: |
-          rustup target add ${{ env.LINUX_TARGET }}
-          cargo build --release --target ${{ env.LINUX_TARGET }}
-
-      - name: Build (MacOS)
-        if: matrix.build == 'macos'
-        run: cargo build --release
-        
-      - name: Build (Windows)
-        if: matrix.build == 'windows'
-        run: cargo build --release
+      - name: Build Rust Binary
+        if: matrix.rust
+        run: cargo build --release --target ${{ matrix.target }}
         env:
-          RUSTFLAGS: -Ctarget-feature=+crt-static  
-      
-      - name: Create artifact directory
-        run: |
-          mkdir ${{ env.RELEASE_DIR }}
-          mkdir dist
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
 
-      - name: Create tarball (Linux)
+      - name: Prepare artifact directory structure
+        shell: bash
+        run: |
+          mkdir -p dist
+
+      - name: Package artifact (Linux)
         if: matrix.build == 'linux'
+        shell: bash
         run: |
-          mv ./target/${{ env.LINUX_TARGET }}/release/${{ env.RELEASE_BIN }} ./dist/${{ env.RELEASE_BIN }}
-          mv ${{ env.RELEASE_ADDS }} ./dist
-          7z a -ttar -so -an ./dist | 7z a -si ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
+          cp ./target/${{ matrix.target }}/release/${{ env.RELEASE_BIN }} ./dist/
+          cp ${{ env.RELEASE_ADDS }} ./dist/
+          ARTIFACT_NAME="${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          pushd dist
+          7z a -ttar -so -an * | 7z a -si ../${ARTIFACT_NAME}
+          popd
+          echo "Created ${ARTIFACT_NAME}"
 
-      - name: Create tarball (MacOS)
+      - name: Package artifact (MacOS)
         if: matrix.build == 'macos'
+        shell: bash
         run: |
-          mv ./target/release/${{ env.RELEASE_BIN }} ./dist/${{ env.RELEASE_BIN }}
-          mv ${{ env.RELEASE_ADDS }} ./dist
-          7z a -ttar -so -an ./dist | 7z a -si ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
+          cp ./target/${{ matrix.target }}/release/${{ env.RELEASE_BIN }} ./dist/
+          cp ${{ env.RELEASE_ADDS }} ./dist/
+          ARTIFACT_NAME="${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          pushd dist
+          7z a -ttar -so -an * | 7z a -si ../${ARTIFACT_NAME}
+          popd
+          echo "Created ${ARTIFACT_NAME}"
 
-      - name: Create tarball (Windows)
+      - name: Package artifact (Windows)
         if: matrix.build == 'windows'
         shell: bash
         run: |
-          mv ./target/release/${{ env.RELEASE_BIN }}.exe ./dist/${{ env.RELEASE_BIN }}.exe
-          mv ${{ env.RELEASE_ADDS }} ./dist
-          7z a -ttar -so -an ./dist | 7z a -si ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.WINDOWS_TARGET }}.tar.gz
+          cp ./target/${{ matrix.target }}/release/${{ env.RELEASE_BIN }}.exe ./dist/
+          cp ${{ env.RELEASE_ADDS }} ./dist/
+          ARTIFACT_NAME="${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          pushd dist
+          7z a -tzip ../${ARTIFACT_NAME} *
+          popd
+          echo "Created ${ARTIFACT_NAME}"
 
-      - name: Create tarball (everscan-verifyjs)
+      - name: Package artifact (everscan-verifyjs)
         if: matrix.build == 'everscan-verifyjs'
-        run: 7z a -ttar -so -an ./everscan-verifyjs | 7z a -si ./${{ env.RELEASE_DIR }}/everscan-verifyjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
+        shell: bash
+        run: |
+          ARTIFACT_NAME="everscan-verifyjs-${{ steps.get_version.outputs.version }}.${{ matrix.archive_ext }}"
+          pushd js
+          7z a -ttar -so -an . | 7z a -si ../${ARTIFACT_NAME}
+          popd
+          echo "Created ${ARTIFACT_NAME}"
 
-      - name: Upload Zip
-        uses: actions/upload-artifact@v1
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.build }}
-          path: ./${{ env.RELEASE_DIR }}
+          name: ${{ matrix.build }}-artifact
+          path: |
+            ${{ matrix.build == 'linux' && format('{0}-{1}-{2}.{3}', env.RELEASE_BIN, steps.get_version.outputs.version, matrix.target, matrix.archive_ext) || '' }}
+            ${{ matrix.build == 'macos' && format('{0}-{1}-{2}.{3}', env.RELEASE_BIN, steps.get_version.outputs.version, matrix.target, matrix.archive_ext) || '' }}
+            ${{ matrix.build == 'windows' && format('{0}-{1}-{2}.{3}', env.RELEASE_BIN, steps.get_version.outputs.version, matrix.target, matrix.archive_ext) || '' }}
+            ${{ matrix.build == 'everscan-verifyjs' && format('everscan-verifyjs-{0}.{1}', steps.get_version.outputs.version, matrix.archive_ext) || '' }}
+          retention-days: 5
 
   release:
-    name: GitHub Release
+    name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required by softprops/action-gh-release to create/update releases and upload assets
+
     steps:
-      - name: Query version number
+      - name: Get version from tag
         id: get_version
         shell: bash
         run: |
-          echo "using version tag ${GITHUB_REF:10}"
-          echo ::set-output name=version::"${GITHUB_REF:10}"
+          VERSION_TAG="${GITHUB_REF#refs/tags/}"
+          echo "Using version tag: $VERSION_TAG"
+          echo "version=$VERSION_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+
+      - name: List downloaded files
+        run: ls -R
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the version derived from the tag
+          tag_name: ${{ steps.get_version.outputs.version }}
+          # Optional: Use tag name as release name, or customize
+          name: Release ${{ steps.get_version.outputs.version }}
+          # Optional: Generate release notes from commits
+          generate_release_notes: false
+          files: |
+            linux-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-musl.tar.gz
+            macos-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.tar.gz
+            windows-artifact/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
+            everscan-verifyjs-artifact/everscan-verifyjs-${{ steps.get_version.outputs.version }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          release_name: ${{ steps.get_version.outputs.VERSION }}
-
-      - name: Download everscan-verifyjs tarball
-        uses: actions/download-artifact@v1
-        with:
-          name: everscan-verifyjs
-
-      - name: Download Linux tarball
-        uses: actions/download-artifact@v1
-        with:
-          name: linux
-
-      - name: Download MacOS tarball
-        uses: actions/download-artifact@v1
-        with:
-          name: macos
-      
-      - name: Download Windows tarball
-        uses: actions/download-artifact@v1
-        with:
-          name: windows
-
-      - name: Release everscan-verifyjs tarball
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./everscan-verifyjs/everscan-verifyjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
-          asset_content_type: application/gzip
-          asset_name: everscan-verifyjs-${{ steps.get_version.outputs.VERSION }}.tar.gz
-
-      - name: Release Linux tarball
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./linux/everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
-          asset_content_type: application/gzip
-          asset_name: everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.LINUX_TARGET }}.tar.gz
-
-      - name: Release MacOS tarball
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./macos/everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
-          asset_content_type: application/gzip
-          asset_name: everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.tar.gz
-      
-      - name: Release Windows tarball
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./windows/everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.WINDOWS_TARGET }}.tar.gz
-          asset_content_type: application/gzip
-          asset_name: everscan-verify-${{ steps.get_version.outputs.VERSION }}-${{ env.WINDOWS_TARGET }}.tar.gz
